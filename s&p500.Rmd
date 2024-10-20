@@ -1,0 +1,166 @@
+---
+title: "S&P 500 Data"
+author: "Arnav"
+date: "`r Sys.Date()`"
+output:
+  html_document: 
+    df_print: paged
+  pdf_document: default
+---
+# Data Cleaning S&P 500 Data in R
+
+#### Dataset from https://www.kaggle.com/datasets/henryhan117/sp-500-historical-data
+
+## Import Section
+```{r}
+library(tidyverse)
+library(lubridate) 
+library(quantmod)
+library(readr)
+SPY <- read_csv("SPX.csv")
+spec(SPY)
+```
+## Checking if data valid/structure & attributes of data
+How do we know this data *really* is complete? By checking these four things we can approximate or understand if this data set is usable to some degree.
+```{r}
+head(SPY)
+tail(SPY)
+str(SPY)
+```
+```{r eval= FALSE}
+attributes(SPY)
+```
+
+## Preparing Data to Clean
+
+Let's rename a column to change one of the names of the variables.
+```{r}
+colnames(SPY)
+SPY <- rename(SPY, "Adjusted Close" = `Adj Close`)
+SPY <- rename(SPY, "Volume of Shares Traded" = `Volume`)
+head(SPY)
+```
+This dataset has a column called volume, but this dataset has errors and some years show a volume of 0 (the total volume of shares traded was 0), which has to be incorrect. 
+```{r}
+SPYVol <- filter(SPY , `Volume of Shares Traded` != 0)
+```
+Now that we have all the data with actual volume, we need to fix the pricing. On some of these columns, the price of open, high, low, close, and adjusted close are all the same. Therefore, we need to get rid of these.
+```{r}
+SPYVol <- SPYVol %>% mutate(daysReturn = (`Adjusted Close` - Open) / Open)
+```
+Now, let's update the data so it can be accessed per year for easier understanding.
+```{r}
+SPYVol <- SPYVol %>% mutate(year = year(Date))
+
+#yearly summary of returns
+tapply(SPYVol$daysReturn , SPYVol$year, summary)
+```
+1950-1961 had no returns. We will remove that from the data and start from 1962.
+```{r}
+SPYVol <- filter(SPYVol, year > 1961)
+```
+We will now convert the daysReturn column into percentages, (and round for visual aid).
+```{r}
+SPYVol <- SPYVol %>%
+  select(Date, Open, High, Low, Close, `Adjusted Close`, daysReturn, `Volume of Shares Traded`, year) %>%
+  mutate(
+           daysReturn = `daysReturn` * 100, #percentage
+           daysReturn = round(daysReturn , digits = 4)) #round
+  
+SPYVol
+```
+
+# Analysis
+Trends for returns on a daily, monthly, and yearly basis.
+```{r}
+summary(SPYVol$daysReturn)
+sd(SPYVol$daysReturn)
+```
+
+Distribution of daysReturn
+```{r}
+daysReturnDistribution <- ggplot(SPYVol, aes(x = daysReturn)) +
+  geom_histogram(binwidth = 0.01) +
+  labs(y = "Frequency", x = "Percentage Return", title = "Distribution of Daily Returns of S&P 500")
+daysReturnDistribution
+```
+
+Removing Outliers
+```{r}
+SPYVolNoOutliers <- filter(SPYVol, daysReturn > -10 & daysReturn < 7.5)
+
+daysReturnDistributionNoOutliers <- ggplot(SPYVolNoOutliers, aes(x = daysReturn)) +
+  geom_histogram(binwidth = 0.01) +
+  labs(y = "Frequency", x = "Percentage Return", title = "Distribution of Daily Returns of S&P 500")
+daysReturnDistributionNoOutliers
+```
+
+  
+  
+## Best & Worst Days
+Although most days are positive, we can see a couple of terrible days. Hence, lets calculate the worst 30 days (not consecutive) in S&P history.
+
+```{r}
+worst30 <- SPYVol %>%
+  top_n(-30, daysReturn) %>%
+  arrange(daysReturn)
+worst30
+```
+Year by Year:
+```{r}
+worstDayByYear <- worst30 %>%
+  count(year(Date)) %>%
+  arrange(desc(n)) %>%
+  rename("Year" = "year(Date)", "Count" = "n") %>%
+  mutate(Year = as.character(Year), Type = "Worst")
+worstDayByYear
+```
+
+Graphing the worst 30 days looks like this:
+```{r}
+worst30 <- ggplot(worstDayByYear, aes(x = Year, y = Count)) +
+  geom_col(fill = "lightgreen") +
+  labs(y = "Number of Bad Days", title = "S&P 500 Worst 30 Daily Returns by Years")
+worst30
+```
+
+**Lets be positive! Now we can look at the best 30 in S&P history.**
+```{r}
+best30 <- SPYVol %>%
+  top_n(30, daysReturn) %>%
+  arrange(daysReturn)
+best30
+```
+Year By Year
+```{r}
+bestDayByYear <- best30 %>%
+  count(year(Date)) %>%
+  arrange(desc(n)) %>%
+  rename("Year" = "year(Date)", "Count" = "n") %>%
+  mutate(Year = as.character(Year), Type = "Best")
+bestDayByYear
+```
+Graphing the best 30 days looks like this:
+```{r}
+best30 <- ggplot(worstDayByYear, aes(x = Year, y = Count)) +
+  geom_col(fill = "lightgreen") +
+  labs(y = "Number of Good Days", title = "S&P 500 Best 30 Daily Returns by Years")
+best30
+```
+Combining the tables can give us an idea of how many good and bad days are in each year.
+```{r}
+combinedDays <- merge(x = bestDayByYear, y = worstDayByYear, 
+                          by = c("Year", "Count", "Type"), all = TRUE)
+combinedDays
+```
+
+```{r}
+combined20 <- ggplot(combinedDays, aes(x = Year, y = Count, fill = Type)) +
+  geom_col() +
+  scale_fill_manual(values = c("seagreen" , "red")) +
+  labs(y = "Appearances in Historical Record Days", title = "Best and Worst 60 Daily Returns for S&P 500 by Year")
+combined20
+
+#2008 has 12 record worst days and 8 record best days
+```
+
